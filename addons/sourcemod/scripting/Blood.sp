@@ -13,6 +13,23 @@
 // DMG_SLASH and DMG_CLUB are kept for melee weapons added by other plugins.
 #define DMG_HIT_MASK (DMG_BULLET | DMG_SLASH | DMG_CLUB)
 
+// Particle systems from particles/blood_impact.pcf (cstrike_pak_dir.vpk). The file is listed in
+// particles/particles_manifest.txt, so every CS:S client loads it at startup; CS:S itself never
+// uses it (its stock blood is the "csblood" effect), the systems come from HL2 / EP2.
+// Each one sprays along +X of the orientation it is given (its "Position Within Sphere Random"
+// initializer has a local speed of +X 10..90 for the impact, +X 48..50 for the spray,
+// +X 35..50 for the puncture), so they are dispatched with the angles of the shot direction:
+// the blood leaves the victim on the far side, away from the shooter.
+// Hit: a red puff with mist, droplets, goop and small chunks (the EP2 bullet impact on flesh)
+#define PARTICLE_HIT "blood_impact_red_01"
+// Headshot: a stream of droplets emitted for about one second, on top of the hit particle
+#define PARTICLE_HEADSHOT "blood_advisor_shrapnel_spray_1"
+// Death: one large blood splash sprite with chunks and mist
+#define PARTICLE_DEATH "blood_advisor_puncture"
+
+// Headshots put twice as many decals on the wall behind the victim
+#define HEADSHOT_WALL_DECAL_MULT 2
+
 // The blood decals are 128x128 textures with $decalscale 0.25, so about 32 units wide in the
 // world. Pool decals are spread inside this radius so they overlap into one larger stain.
 #define POOL_RADIUS 14.0
@@ -23,7 +40,7 @@
 #define POOL_DELAY_FIRST 0.3
 #define POOL_DELAY_STEP 0.15
 
-// Random spread added to the shot direction for each extra wall decal and spray
+// Random spread added to the shot direction for each extra wall decal
 #define DIRECTION_JITTER 0.12
 
 // Stock HL2 blood decal materials, shipped with every Source game (hl2_misc_dir.vpk). The game
@@ -40,13 +57,10 @@ static const char g_sDecalNames[][] =
 	"decals/blood6"
 };
 
-// Dark red: the stock HL2 blood color, a full 255 red looks pink on the sprites
-static const int g_iBloodColor[4] = { 150, 0, 0, 255 };
-
 ConVar g_cvEnable;
-ConVar g_cvAmount;
-ConVar g_cvSprays;
-ConVar g_cvHeadshotMult;
+ConVar g_cvParticles;
+ConVar g_cvHeadshotSpurt;
+ConVar g_cvDeathBurst;
 ConVar g_cvWallDistance;
 ConVar g_cvWallDecals;
 ConVar g_cvDeathPool;
@@ -54,13 +68,23 @@ ConVar g_cvDeathPoolDecals;
 ConVar g_cvMaxTempEnts;
 
 int g_iDecals[sizeof(g_sDecalNames)];
-int g_iSprayModel = -1;
-int g_iDropModel = -1;
+
+// Index of the "ParticleEffect" client effect in the "EffectDispatch" string table, and of each
+// particle system in the "ParticleEffectNames" string table
+int g_iEffectParticle = INVALID_STRING_INDEX;
+int g_iParticleHit = INVALID_STRING_INDEX;
+int g_iParticleHeadshot = INVALID_STRING_INDEX;
+int g_iParticleDeath = INVALID_STRING_INDEX;
 
 // Hit group of the last TraceAttack on each player, and the tick it happened on. The damage
 // position comes later in OnTakeDamage_Alive, which does not carry the hit group.
 int g_iHitGroup[MAXPLAYERS + 1];
 int g_iHitGroupTick[MAXPLAYERS + 1] = { -1, ... };
+
+// Direction of the last hit on each player and its tick: player_death fires during the killing
+// hit, so the death burst can follow the killing shot
+float g_fLastHitDir[MAXPLAYERS + 1][3];
+int g_iLastHitTick[MAXPLAYERS + 1] = { -1, ... };
 
 // Temp entities sent during the current tick
 int g_iBudgetTick = -1;
@@ -70,7 +94,7 @@ public Plugin myinfo =
 {
 	name = "Blood",
 	author = "Rushaway",
-	description = "More blood: bigger hit sprays, wall splatters and death pools",
+	description = "More blood: blood particles on hits, wall splatters and death pools",
 	version = PLUGIN_VERSION,
 	url = "https://github.com/srcdslab/sm-plugin-Blood"
 };
@@ -78,11 +102,11 @@ public Plugin myinfo =
 public void OnPluginStart()
 {
 	g_cvEnable = CreateConVar("sm_blood_enable", "1", "Enable the extra blood", _, true, 0.0, true, 1.0);
-	g_cvAmount = CreateConVar("sm_blood_amount", "12", "Size of the blood spray on a hit (the stock HL2 spray goes from 3 to 16)", _, true, 1.0, true, 255.0);
-	g_cvSprays = CreateConVar("sm_blood_sprays", "2", "Blood sprays per hit, 0 = no spray", _, true, 0.0, true, 8.0);
-	g_cvHeadshotMult = CreateConVar("sm_blood_headshot_mult", "2.0", "Headshot multiplier for the spray size, the spray count and the wall decals", _, true, 1.0, true, 5.0);
+	g_cvParticles = CreateConVar("sm_blood_particles", "1", "Blood particle burst on each hit", _, true, 0.0, true, 1.0);
+	g_cvHeadshotSpurt = CreateConVar("sm_blood_headshot_spurt", "1", "Extra spurt of blood droplets on headshots", _, true, 0.0, true, 1.0);
+	g_cvDeathBurst = CreateConVar("sm_blood_death_burst", "1", "Large blood splash on the body when a player dies", _, true, 0.0, true, 1.0);
 	g_cvWallDistance = CreateConVar("sm_blood_wall_distance", "150", "Distance behind the victim, along the shot, where blood can splatter a wall or the floor, 0 = off", _, true, 0.0, true, 1000.0);
-	g_cvWallDecals = CreateConVar("sm_blood_wall_decals", "1", "Blood decals put on the wall per hit", _, true, 0.0, true, 4.0);
+	g_cvWallDecals = CreateConVar("sm_blood_wall_decals", "1", "Blood decals put on the wall per hit (twice as many on headshots)", _, true, 0.0, true, 4.0);
 	g_cvDeathPool = CreateConVar("sm_blood_death_pool", "1", "Leave a pool of blood on the floor where a player dies", _, true, 0.0, true, 1.0);
 	g_cvDeathPoolDecals = CreateConVar("sm_blood_death_pool_decals", "5", "Decals that make up a death pool", _, true, 1.0, true, 10.0);
 	g_cvMaxTempEnts = CreateConVar("sm_blood_max_tempents", "16", "Most temp entities this plugin sends per server tick (shotgun pellets and several kills in one tick can add up)", _, true, 1.0, true, 64.0);
@@ -104,9 +128,10 @@ public void OnMapStart()
 	for (int i = 0; i < sizeof(g_sDecalNames); i++)
 		g_iDecals[i] = PrecacheDecal(g_sDecalNames[i], true);
 
-	// Same sprites as the stock UTIL_BloodDrips, already precached by the game
-	g_iSprayModel = PrecacheModel("sprites/bloodspray.vmt", true);
-	g_iDropModel = PrecacheModel("sprites/blood.vmt", true);
+	g_iEffectParticle = GetOrAddStringIndex("EffectDispatch", "ParticleEffect");
+	g_iParticleHit = GetOrAddStringIndex("ParticleEffectNames", PARTICLE_HIT);
+	g_iParticleHeadshot = GetOrAddStringIndex("ParticleEffectNames", PARTICLE_HEADSHOT);
+	g_iParticleDeath = GetOrAddStringIndex("ParticleEffectNames", PARTICLE_DEATH);
 
 	g_iBudgetTick = -1;
 	g_iBudgetUsed = 0;
@@ -115,6 +140,7 @@ public void OnMapStart()
 public void OnClientPutInServer(int client)
 {
 	g_iHitGroupTick[client] = -1;
+	g_iLastHitTick[client] = -1;
 	SDKHook(client, SDKHook_TraceAttack, Hook_TraceAttack);
 	// OnTakeDamage_Alive only runs when the damage really applies: no blood when friendly fire is
 	// off, or when another plugin blocks the damage in OnTakeDamage (spawn protection)
@@ -136,8 +162,10 @@ public void Hook_OnTakeDamageAlivePost(int victim, int attacker, int inflictor, 
 	if (victim < 1 || victim > MaxClients || !IsClientInGame(victim))
 		return;
 
+	int iTick = GetGameTickCount();
+
 	// TraceAttack runs in the same tick as the damage it belongs to: an older hit group is stale
-	bool bHeadshot = g_iHitGroupTick[victim] == GetGameTickCount() && g_iHitGroup[victim] == HITGROUP_HEAD;
+	bool bHeadshot = g_iHitGroupTick[victim] == iTick && g_iHitGroup[victim] == HITGROUP_HEAD;
 	g_iHitGroupTick[victim] = -1;
 
 	bool bHit = (damagetype & DMG_HIT_MASK) != 0 && !IsZeroVector(damagePosition);
@@ -162,13 +190,8 @@ public void Hook_OnTakeDamageAlivePost(int victim, int attacker, int inflictor, 
 	}
 	else
 	{
-		// Fall, grenade or world damage: no hit point, bleed from the middle of the body
-		float fFeet[3];
-		float fEye[3];
-		GetClientAbsOrigin(victim, fFeet);
-		GetClientEyePosition(victim, fEye);
-		AddVectors(fFeet, fEye, fHitPos);
-		ScaleVector(fHitPos, 0.5);
+		// Fall, grenade or world damage: no hit point, bleed upwards from the middle of the body
+		GetBodyCenter(victim, fHitPos);
 		fDir[2] = 1.0;
 	}
 
@@ -176,61 +199,60 @@ public void Hook_OnTakeDamageAlivePost(int victim, int attacker, int inflictor, 
 		fDir[2] = 1.0;
 	NormalizeVector(fDir, fDir);
 
-	float fMult = bHeadshot ? g_cvHeadshotMult.FloatValue : 1.0;
+	g_fLastHitDir[victim] = fDir;
+	g_iLastHitTick[victim] = iTick;
 
-	SpawnSprays(fHitPos, fDir, fMult);
+	if (g_cvParticles.BoolValue)
+		DispatchParticle(g_iParticleHit, fHitPos, fDir);
+
+	if (bHeadshot && g_cvHeadshotSpurt.BoolValue)
+		DispatchParticle(g_iParticleHeadshot, fHitPos, fDir);
 
 	// Wall splatter only for a bullet or knife hit from another player: self-damage, world and
 	// fall damage have no meaningful shot direction
 	if (bHit && bByEnemy)
-		SpawnWallDecals(fHitPos, fDir, fMult);
+		SpawnWallDecals(fHitPos, fDir, bHeadshot ? HEADSHOT_WALL_DECAL_MULT : 1);
 }
 
 public void Event_PlayerDeath(Event event, const char[] name, bool dontBroadcast)
 {
-	if (!g_cvEnable.BoolValue || !g_cvDeathPool.BoolValue)
+	if (!g_cvEnable.BoolValue)
 		return;
 
 	int iVictim = GetClientOfUserId(event.GetInt("userid"));
 	if (!iVictim || !IsClientInGame(iVictim))
 		return;
 
-	float fOrigin[3];
-	GetClientAbsOrigin(iVictim, fOrigin);
-	SpawnDeathPool(fOrigin);
-}
-
-void SpawnSprays(const float fPos[3], const float fDir[3], float fMult)
-{
-	if (g_iSprayModel == -1 || g_iDropModel == -1)
-		return;
-
-	int iCount = RoundToNearest(g_cvSprays.IntValue * fMult);
-	int iSize = RoundToNearest(g_cvAmount.IntValue * fMult);
-	if (iSize > 255)
-		iSize = 255; // m_nSize is sent on 8 bits
-
-	for (int i = 0; i < iCount; i++)
+	if (g_cvDeathBurst.BoolValue)
 	{
-		if (!TakeBudget())
-			return;
+		float fCenter[3];
+		GetBodyCenter(iVictim, fCenter);
 
-		float fSprayDir[3];
-		JitterDirection(fDir, fSprayDir, i == 0 ? 0.0 : DIRECTION_JITTER);
+		// Follow the killing hit; without one (suicide, trigger_hurt...) splash upwards
+		float fDir[3];
+		if (g_iLastHitTick[iVictim] == GetGameTickCount())
+			fDir = g_fLastHitDir[iVictim];
+		else
+			fDir[2] = 1.0;
 
-		TE_SetupBloodSprite(fPos, fSprayDir, g_iBloodColor, iSize, g_iSprayModel, g_iDropModel);
-		// A spray only lasts a moment: send it to the players who can see the spot
-		TE_SendToAllInRange(fPos, RangeType_Visibility);
+		DispatchParticle(g_iParticleDeath, fCenter, fDir);
+	}
+
+	if (g_cvDeathPool.BoolValue)
+	{
+		float fOrigin[3];
+		GetClientAbsOrigin(iVictim, fOrigin);
+		SpawnDeathPool(fOrigin);
 	}
 }
 
-void SpawnWallDecals(const float fHitPos[3], const float fDir[3], float fMult)
+void SpawnWallDecals(const float fHitPos[3], const float fDir[3], int iMult)
 {
 	float fDistance = g_cvWallDistance.FloatValue;
 	if (fDistance <= 0.0)
 		return;
 
-	int iCount = RoundToNearest(g_cvWallDecals.IntValue * fMult);
+	int iCount = g_cvWallDecals.IntValue * iMult;
 	for (int i = 0; i < iCount; i++)
 	{
 		float fTraceDir[3];
@@ -322,6 +344,63 @@ void SendWorldDecal(const float fPos[3], float fDelay)
 	TE_SendToAll(fDelay);
 }
 
+// Plays a particle system at a point through the "ParticleEffect" client effect. The client
+// (ParticleEffectCallback) reads the system from m_nHitBox, puts control point 0 at m_vOrigin,
+// control point 1 at m_vStart and orients control point 0 with m_vAngles.
+void DispatchParticle(int iParticle, const float fPos[3], const float fDir[3])
+{
+	if (g_iEffectParticle == INVALID_STRING_INDEX || iParticle == INVALID_STRING_INDEX)
+		return;
+
+	if (!TakeBudget())
+		return;
+
+	float fAngles[3];
+	GetVectorAngles(fDir, fAngles);
+
+	// CEffectData property names of the Orange Box engine (CS:S): the origin and start vectors are
+	// sent as three floats each, "m_vOrigin[0]".."[2]" (CS:GO renamed them "m_vOrigin.x").
+	// The temp entity object is shared with the game's own effects, so every field the client
+	// reads for this effect is written, m_fFlags included (0 = not attached to an entity).
+	TE_Start("EffectDispatch");
+	TE_WriteFloat("m_vOrigin[0]", fPos[0]);
+	TE_WriteFloat("m_vOrigin[1]", fPos[1]);
+	TE_WriteFloat("m_vOrigin[2]", fPos[2]);
+	TE_WriteFloat("m_vStart[0]", fPos[0]);
+	TE_WriteFloat("m_vStart[1]", fPos[1]);
+	TE_WriteFloat("m_vStart[2]", fPos[2]);
+	TE_WriteVector("m_vAngles", fAngles);
+	TE_WriteNum("m_fFlags", 0);
+	TE_WriteNum("m_nHitBox", iParticle);
+	TE_WriteNum("m_iEffectName", g_iEffectParticle);
+	// Particles only last a moment: send them to the players who can see the spot
+	TE_SendToAllInRange(fPos, RangeType_Visibility);
+}
+
+// SourceMod has no native to precache a particle system: add its name to the string table the
+// client resolves m_nHitBox against. Done in OnMapStart, long before the first dispatch, so the
+// table update reaches every client before the effect does.
+int GetOrAddStringIndex(const char[] sTable, const char[] sName)
+{
+	int iTable = FindStringTable(sTable);
+	if (iTable == INVALID_STRING_TABLE)
+	{
+		LogError("String table \"%s\" not found, \"%s\" disabled", sTable, sName);
+		return INVALID_STRING_INDEX;
+	}
+
+	int iIndex = FindStringIndex(iTable, sName);
+	if (iIndex == INVALID_STRING_INDEX)
+	{
+		bool bLocked = LockStringTables(false);
+		AddToStringTable(iTable, sName);
+		LockStringTables(bLocked);
+		iIndex = FindStringIndex(iTable, sName);
+	}
+
+	return iIndex;
+}
+
 // The engine only sends a limited number of temp entities per snapshot and drops the rest,
 // including the stock impact effects. Cap what this plugin adds in a single tick.
 bool TakeBudget()
@@ -338,6 +417,16 @@ bool TakeBudget()
 
 	g_iBudgetUsed++;
 	return true;
+}
+
+void GetBodyCenter(int client, float fCenter[3])
+{
+	float fFeet[3];
+	float fEye[3];
+	GetClientAbsOrigin(client, fFeet);
+	GetClientEyePosition(client, fEye);
+	AddVectors(fFeet, fEye, fCenter);
+	ScaleVector(fCenter, 0.5);
 }
 
 void JitterDirection(const float fDir[3], float fOut[3], float fJitter)
