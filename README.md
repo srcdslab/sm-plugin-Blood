@@ -11,8 +11,8 @@ come with the game.
 
 ## How it works
 
-- **Hit particles**: each hit plays the `blood_impact_red_01` particle system (red puff, mist,
-  droplets, goop) at the hit point, oriented along the shot so the blood leaves the victim on the
+- **Hit particles**: each hit plays the children of the `blood_impact_red_01` particle system
+  (`_mist`, `_goop`, `_smalldroplets`) at the hit point, oriented along the shot so the blood leaves the victim on the
   far side. Hits without a hit point (fall damage, grenades, world damage) bleed upwards from the
   middle of the body.
 - **Headshots**: `blood_advisor_shrapnel_spray_1` adds a stream of droplets for about one second,
@@ -22,8 +22,9 @@ come with the game.
   units. If it reaches a world surface (wall or floor), it puts `sm_blood_wall_decals` blood decals
   there (`World Decal` temp entity with a random `decals/blood1` to `decals/blood6`). Self-damage,
   world and fall damage never splatter walls.
-- **Death**: `blood_advisor_puncture` (a large blood splash) bursts from the body along the
-  killing shot, and `sm_blood_death_pool_decals` blood decals are laid on the floor under the
+- **Death**: two `blood_impact_red_01_goop` splashes, `_mist` and `_droplets` burst from the body
+  along the killing shot (the parent systems are not used: their `blood_impact_red_01_chunk` child
+  draws as black flakes in CS:S), and `sm_blood_death_pool_decals` blood decals are laid on the floor under the
   body, one after the other, so the pool spreads.
 - **No blood on blocked damage**: the effects run in `OnTakeDamage_Alive`, which only fires when
   the damage applies. Teammates with friendly fire off, or players under spawn protection from

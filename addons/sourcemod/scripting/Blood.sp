@@ -20,12 +20,15 @@
 // initializer has a local speed of +X 10..90 for the impact, +X 48..50 for the spray,
 // +X 35..50 for the puncture), so they are dispatched with the angles of the shot direction:
 // the blood leaves the victim on the far side, away from the shooter.
-// Hit: a red puff with mist, droplets, goop and small chunks (the EP2 bullet impact on flesh)
-#define PARTICLE_HIT "blood_impact_red_01"
+// The parent systems (blood_impact_red_01, blood_advisor_puncture) also spawn
+// blood_impact_red_01_chunk, which draws as black flakes in CS:S (seen in game on 2026-11-23):
+// their children are dispatched one by one instead, without the chunks.
+// Hit: red mist, a goop splash and small droplets (blood_impact_red_01 minus its chunks)
+char g_sParticlesHit[][] = { "blood_impact_red_01_mist", "blood_impact_red_01_goop", "blood_impact_red_01_smalldroplets" };
 // Headshot: a stream of droplets emitted for about one second, on top of the hit particle
 #define PARTICLE_HEADSHOT "blood_advisor_shrapnel_spray_1"
-// Death: one large blood splash sprite with chunks and mist
-#define PARTICLE_DEATH "blood_advisor_puncture"
+// Death: two goop splashes, mist and droplets (blood_advisor_puncture minus its chunks)
+char g_sParticlesDeath[][] = { "blood_impact_red_01_goop", "blood_impact_red_01_goop", "blood_impact_red_01_mist", "blood_impact_red_01_droplets" };
 
 // Headshots put twice as many decals on the wall behind the victim
 #define HEADSHOT_WALL_DECAL_MULT 2
@@ -72,9 +75,9 @@ int g_iDecals[sizeof(g_sDecalNames)];
 // Index of the "ParticleEffect" client effect in the "EffectDispatch" string table, and of each
 // particle system in the "ParticleEffectNames" string table
 int g_iEffectParticle = INVALID_STRING_INDEX;
-int g_iParticleHit = INVALID_STRING_INDEX;
+int g_iParticlesHit[sizeof(g_sParticlesHit)];
 int g_iParticleHeadshot = INVALID_STRING_INDEX;
-int g_iParticleDeath = INVALID_STRING_INDEX;
+int g_iParticlesDeath[sizeof(g_sParticlesDeath)];
 
 // Hit group of the last TraceAttack on each player, and the tick it happened on. The damage
 // position comes later in OnTakeDamage_Alive, which does not carry the hit group.
@@ -129,9 +132,11 @@ public void OnMapStart()
 		g_iDecals[i] = PrecacheDecal(g_sDecalNames[i], true);
 
 	g_iEffectParticle = GetOrAddStringIndex("EffectDispatch", "ParticleEffect");
-	g_iParticleHit = GetOrAddStringIndex("ParticleEffectNames", PARTICLE_HIT);
+	for (int i = 0; i < sizeof(g_sParticlesHit); i++)
+		g_iParticlesHit[i] = GetOrAddStringIndex("ParticleEffectNames", g_sParticlesHit[i]);
 	g_iParticleHeadshot = GetOrAddStringIndex("ParticleEffectNames", PARTICLE_HEADSHOT);
-	g_iParticleDeath = GetOrAddStringIndex("ParticleEffectNames", PARTICLE_DEATH);
+	for (int i = 0; i < sizeof(g_sParticlesDeath); i++)
+		g_iParticlesDeath[i] = GetOrAddStringIndex("ParticleEffectNames", g_sParticlesDeath[i]);
 
 	g_iBudgetTick = -1;
 	g_iBudgetUsed = 0;
@@ -203,7 +208,10 @@ public void Hook_OnTakeDamageAlivePost(int victim, int attacker, int inflictor, 
 	g_iLastHitTick[victim] = iTick;
 
 	if (g_cvParticles.BoolValue)
-		DispatchParticle(g_iParticleHit, fHitPos, fDir);
+	{
+		for (int i = 0; i < sizeof(g_iParticlesHit); i++)
+			DispatchParticle(g_iParticlesHit[i], fHitPos, fDir);
+	}
 
 	if (bHeadshot && g_cvHeadshotSpurt.BoolValue)
 		DispatchParticle(g_iParticleHeadshot, fHitPos, fDir);
@@ -235,7 +243,8 @@ public void Event_PlayerDeath(Event event, const char[] name, bool dontBroadcast
 		else
 			fDir[2] = 1.0;
 
-		DispatchParticle(g_iParticleDeath, fCenter, fDir);
+		for (int i = 0; i < sizeof(g_iParticlesDeath); i++)
+			DispatchParticle(g_iParticlesDeath[i], fCenter, fDir);
 	}
 
 	if (g_cvDeathPool.BoolValue)
