@@ -15,7 +15,7 @@ come with the game.
   (`_mist`, `_goop`, `_smalldroplets`) at the hit point, oriented along the shot so the blood leaves the victim on the
   far side. Hits without a hit point (fall damage, grenades, world damage) bleed upwards from the
   middle of the body.
-- **Headshots**: `blood_advisor_shrapnel_spray_1` adds a stream of droplets for about one second,
+- **Headshots**: `blood_advisor_pierce_spray` adds a stream of red droplets for about 1.5 s,
   and the wall behind gets twice as many decals.
 - **Wall splatter**: for a bullet or knife hit from another player, the plugin traces from the hit
   point along the shot, from the attacker's eyes through the victim, for `sm_blood_wall_distance`
