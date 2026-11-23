@@ -25,13 +25,11 @@
 // their children are dispatched one by one instead, without the chunks.
 // Hit: red mist, a goop splash and small droplets (blood_impact_red_01 minus its chunks)
 char g_sParticlesHit[][] = { "blood_impact_red_01_mist", "blood_impact_red_01_goop", "blood_impact_red_01_smalldroplets" };
-// Headshot: a stream of red droplets emitted for about 1.5 s, on top of the hit particle.
-// blood_advisor_pierce_spray (+ its _b and _c children) is red (color 27..66, 4..16, 3..16);
-// blood_advisor_shrapnel_spray_1 used before is the Advisor's yellow-green blood (159, 158, 34),
-// players saw it as vomit (2026-11-23). This spray goes along local +Z (speed 0 0 24..48), not +X:
-// HEADSHOT_PITCH_OFFSET turns its up axis onto the shot direction.
-#define PARTICLE_HEADSHOT "blood_advisor_pierce_spray"
-#define HEADSHOT_PITCH_OFFSET 90.0
+// Headshot: an extra burst of bright red droplets and a goop splash, on top of the hit particles.
+// blood_advisor_shrapnel_spray_1 used before is the Advisor's yellow-green blood (159, 158, 34):
+// players saw it as vomit. blood_advisor_pierce_spray is red but so dark (27..66) that it drew
+// as a grey-black cloud against the sky (both seen in game on 2026-11-23).
+char g_sParticlesHeadshot[][] = { "blood_impact_red_01_droplets", "blood_impact_red_01_goop", "blood_impact_red_01_droplets" };
 // Death: two goop splashes, mist and droplets (blood_advisor_puncture minus its chunks)
 char g_sParticlesDeath[][] = { "blood_impact_red_01_goop", "blood_impact_red_01_goop", "blood_impact_red_01_mist", "blood_impact_red_01_droplets" };
 
@@ -81,7 +79,7 @@ int g_iDecals[sizeof(g_sDecalNames)];
 // particle system in the "ParticleEffectNames" string table
 int g_iEffectParticle = INVALID_STRING_INDEX;
 int g_iParticlesHit[sizeof(g_sParticlesHit)];
-int g_iParticleHeadshot = INVALID_STRING_INDEX;
+int g_iParticlesHeadshot[sizeof(g_sParticlesHeadshot)];
 int g_iParticlesDeath[sizeof(g_sParticlesDeath)];
 
 // Hit group of the last TraceAttack on each player, and the tick it happened on. The damage
@@ -139,7 +137,8 @@ public void OnMapStart()
 	g_iEffectParticle = GetOrAddStringIndex("EffectDispatch", "ParticleEffect");
 	for (int i = 0; i < sizeof(g_sParticlesHit); i++)
 		g_iParticlesHit[i] = GetOrAddStringIndex("ParticleEffectNames", g_sParticlesHit[i]);
-	g_iParticleHeadshot = GetOrAddStringIndex("ParticleEffectNames", PARTICLE_HEADSHOT);
+	for (int i = 0; i < sizeof(g_sParticlesHeadshot); i++)
+		g_iParticlesHeadshot[i] = GetOrAddStringIndex("ParticleEffectNames", g_sParticlesHeadshot[i]);
 	for (int i = 0; i < sizeof(g_sParticlesDeath); i++)
 		g_iParticlesDeath[i] = GetOrAddStringIndex("ParticleEffectNames", g_sParticlesDeath[i]);
 
@@ -219,7 +218,10 @@ public void Hook_OnTakeDamageAlivePost(int victim, int attacker, int inflictor, 
 	}
 
 	if (bHeadshot && g_cvHeadshotSpurt.BoolValue)
-		DispatchParticle(g_iParticleHeadshot, fHitPos, fDir, HEADSHOT_PITCH_OFFSET);
+	{
+		for (int i = 0; i < sizeof(g_iParticlesHeadshot); i++)
+			DispatchParticle(g_iParticlesHeadshot[i], fHitPos, fDir);
+	}
 
 	// Wall splatter only for a bullet or knife hit from another player: self-damage, world and
 	// fall damage have no meaningful shot direction
@@ -361,9 +363,7 @@ void SendWorldDecal(const float fPos[3], float fDelay)
 // Plays a particle system at a point through the "ParticleEffect" client effect. The client
 // (ParticleEffectCallback) reads the system from m_nHitBox, puts control point 0 at m_vOrigin,
 // control point 1 at m_vStart and orients control point 0 with m_vAngles.
-// fPitchOffset: added to the pitch of the shot direction, for systems that do not spray along +X
-// (with no roll, pitch + 90 puts the local +Z axis on the direction)
-void DispatchParticle(int iParticle, const float fPos[3], const float fDir[3], float fPitchOffset = 0.0)
+void DispatchParticle(int iParticle, const float fPos[3], const float fDir[3])
 {
 	if (g_iEffectParticle == INVALID_STRING_INDEX || iParticle == INVALID_STRING_INDEX)
 		return;
@@ -373,7 +373,6 @@ void DispatchParticle(int iParticle, const float fPos[3], const float fDir[3], f
 
 	float fAngles[3];
 	GetVectorAngles(fDir, fAngles);
-	fAngles[0] += fPitchOffset;
 
 	// CEffectData property names of the Orange Box engine (CS:S): the origin and start vectors are
 	// sent as three floats each, "m_vOrigin[0]".."[2]" (CS:GO renamed them "m_vOrigin.x").
