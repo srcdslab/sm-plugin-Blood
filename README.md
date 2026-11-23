@@ -15,8 +15,9 @@ come with the game.
   (`_mist`, `_goop`, `_smalldroplets`) at the hit point, oriented along the shot so the blood leaves the victim on the
   far side. Hits without a hit point (fall damage, grenades, world damage) bleed upwards from the
   middle of the body.
-- **Headshots**: `blood_advisor_shrapnel_spray_1` adds a stream of droplets for about one second,
-  and the wall behind gets twice as many decals.
+- **Headshots**: an extra burst of bright red droplets and a goop splash (`blood_impact_red_01_droplets`,
+  `blood_impact_red_01_goop`), and the wall behind gets twice as many decals. The Advisor sprays of HL2 EP2
+  are not used: one is yellow-green, the other almost black.
 - **Wall splatter**: for a bullet or knife hit from another player, the plugin traces from the hit
   point along the shot, from the attacker's eyes through the victim, for `sm_blood_wall_distance`
   units. If it reaches a world surface (wall or floor), it puts `sm_blood_wall_decals` blood decals
